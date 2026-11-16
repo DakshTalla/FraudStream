@@ -88,7 +88,6 @@ class KafkaBroker:
         from kafka import KafkaProducer
         self._producer = KafkaProducer(
             bootstrap_servers=self._bootstrap,
-            value_serializer=_to_json,
             linger_ms=5,   # wait up to 5 ms to batch messages: more throughput
             acks=1,        # leader acknowledgement: good balance of speed and safety
         )
@@ -98,7 +97,8 @@ class KafkaBroker:
         # the network I/O, so this does not block the event loop.
         # Keying by payer sends all of one account's events to the same
         # partition, which preserves their order (needed for velocity features).
-        self._producer.send(topic, message, key=str(message.get("payer", "")).encode("utf-8"))
+        key = str(message.get("payer", "")).encode("utf-8")
+        self._producer.send(topic, _to_json(message), key=key)
 
     async def subscribe(self, topic: str) -> AsyncIterator[list[dict]]:
         from kafka import KafkaConsumer
@@ -111,7 +111,6 @@ class KafkaBroker:
             # stopped. This demo uses a new topic for every run instead (see
             # api.py), so the group is new too and reads from the beginning.
             group_id=f"{self._group_id}-{topic}",
-            value_deserializer=_from_json,
             auto_offset_reset="earliest",
         )
 
@@ -121,7 +120,8 @@ class KafkaBroker:
             # One poll() already returns a batch, which we pass on as-is.
             while not self._stopping.is_set():
                 polled = consumer.poll(timeout_ms=200, max_records=MAX_BATCH)
-                batch = [record.value for records in polled.values() for record in records]
+                batch = [_from_json(record.value) for records in polled.values()
+                         for record in records]
                 if batch:
                     future = asyncio.run_coroutine_threadsafe(queue.put(batch), loop)
                     future.result()   # blocks this thread if the scorer is behind
