@@ -15,12 +15,22 @@ from typing import AsyncIterator, Protocol
 
 from .config import BROKER_KIND, KAFKA_BOOTSTRAP
 
+MAX_BATCH = 256   # upper bound on a micro-batch, keeps worst-case latency bounded
+
+
+def _to_json(message: dict) -> bytes:
+    return json.dumps(message).encode("utf-8")
+
+
+def _from_json(raw: bytes) -> dict:
+    return json.loads(raw.decode("utf-8"))
+
 
 class Broker(Protocol):
     name: str
     async def start(self) -> None: ...
     async def publish(self, topic: str, message: dict) -> None: ...
-    def subscribe(self, topic: str) -> AsyncIterator[dict]: ...
+    def subscribe(self, topic: str) -> AsyncIterator[list[dict]]: ...
     async def stop(self) -> None: ...
 
 
@@ -45,10 +55,17 @@ class InProcessBroker:
     async def publish(self, topic: str, message: dict) -> None:
         await self._queue(topic).put(message)
 
-    async def subscribe(self, topic: str) -> AsyncIterator[dict]:
+    async def subscribe(self, topic: str) -> AsyncIterator[list[dict]]:
+        """Yield micro-batches: wait for one message, then take whatever else
+        is ALREADY waiting (never wait to fill a batch). Under light load a
+        batch is 1 message, so latency stays minimal; under heavy load batches
+        grow by themselves and throughput rises."""
         queue = self._queue(topic)
         while True:
-            yield await queue.get()
+            batch = [await queue.get()]
+            while len(batch) < MAX_BATCH and not queue.empty():
+                batch.append(queue.get_nowait())
+            yield batch
 
     async def stop(self) -> None:
         pass
@@ -69,7 +86,7 @@ class KafkaBroker:
         from kafka import KafkaProducer
         self._producer = KafkaProducer(
             bootstrap_servers=self._bootstrap,
-            value_serializer=lambda m: json.dumps(m).encode("utf-8"),
+            value_serializer=_to_json,
             linger_ms=5,   # wait up to 5 ms to batch messages: more throughput
             acks=1,        # leader acknowledgement: good balance of speed and safety
         )
@@ -81,24 +98,26 @@ class KafkaBroker:
         # partition, which preserves their order (needed for velocity features).
         self._producer.send(topic, message, key=str(message.get("payer", "")).encode("utf-8"))
 
-    async def subscribe(self, topic: str) -> AsyncIterator[dict]:
+    async def subscribe(self, topic: str) -> AsyncIterator[list[dict]]:
         from kafka import KafkaConsumer
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue = asyncio.Queue(1000)
+        queue: asyncio.Queue = asyncio.Queue(8)   # holds batches, not messages
         consumer = KafkaConsumer(
             topic, bootstrap_servers=self._bootstrap, group_id=self._group_id,
-            value_deserializer=lambda b: json.loads(b.decode("utf-8")),
+            value_deserializer=_from_json,
             auto_offset_reset="latest",   # a fresh consumer starts from "now"
         )
 
         def poll_forever() -> None:
             # kafka-python is blocking, so it lives in its own thread and
             # hands messages to the asyncio world through a bounded queue.
+            # One poll() already returns a batch, which we pass on as-is.
             while not self._stopping.is_set():
-                for records in consumer.poll(timeout_ms=200).values():
-                    for record in records:
-                        future = asyncio.run_coroutine_threadsafe(queue.put(record.value), loop)
-                        future.result()   # blocks this thread if the queue is full
+                polled = consumer.poll(timeout_ms=200, max_records=MAX_BATCH)
+                batch = [record.value for records in polled.values() for record in records]
+                if batch:
+                    future = asyncio.run_coroutine_threadsafe(queue.put(batch), loop)
+                    future.result()   # blocks this thread if the scorer is behind
             consumer.close()
 
         threading.Thread(target=poll_forever, daemon=True, name="kafka-consumer").start()

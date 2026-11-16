@@ -35,19 +35,24 @@ OUT_PATH = BACKEND_DIR.parent / "docs" / "benchmark.json"
 async def run(broker_kind: str, n_max: int, rate: float, seconds: float) -> dict:
     pipeline = Pipeline(FraudModel(), AlertStore(":memory:"))
     simulator = Simulator(seed=11)
-    pipeline.warm_up(simulator, 100_000)
+    pipeline.warm_up(simulator, 340_000)   # same maturity as the API
     broker = make_broker(broker_kind)
     await broker.start()
     topic = f"bench-{int(time.time())}"   # fresh topic so old runs do not mix in
     stream = broker.subscribe(topic)
 
     latencies_ms: list[float] = []
+    batch_sizes: list[int] = []
 
     async def consume(count: int) -> None:
-        for _ in range(count):
-            message = await anext(stream)
-            pipeline.process(Transaction.from_dict(message))
-            latencies_ms.append((time.time() - message["emitted_at"]) * 1000)
+        done = 0
+        while done < count:
+            batch = await anext(stream)
+            pipeline.process_batch([Transaction.from_dict(m) for m in batch])
+            finished = time.time()
+            latencies_ms.extend((finished - m["emitted_at"]) * 1000 for m in batch)
+            batch_sizes.append(len(batch))
+            done += len(batch)
 
     async def publish(txn: Transaction) -> None:
         txn.emitted_at = time.time()
@@ -63,13 +68,17 @@ async def run(broker_kind: str, n_max: int, rate: float, seconds: float) -> dict
     txns = simulator.take(n_max)
     consumer = asyncio.create_task(consume(n_max))
     started = time.perf_counter()
-    for txn in txns:
+    for i, txn in enumerate(txns):
         await publish(txn)
+        if i % 50 == 0:
+            await asyncio.sleep(0)   # give the consumer task a turn
     await consumer
     throughput = n_max / (time.perf_counter() - started)
 
     # --- 2. latency at a steady rate ---
+    mean_batch_max = float(np.mean(batch_sizes))
     latencies_ms.clear()
+    batch_sizes.clear()
     n_paced = int(rate * seconds)
     consumer = asyncio.create_task(consume(n_paced))
     next_at = time.perf_counter()
@@ -86,8 +95,10 @@ async def run(broker_kind: str, n_max: int, rate: float, seconds: float) -> dict
         "machine": f"{platform.processor()} / Python {platform.python_version()}",
         "max_throughput_tps": round(throughput),
         "max_throughput_txns": n_max,
+        "mean_batch_at_max": round(mean_batch_max, 1),
         "paced_rate_tps": rate,
         "paced_txns": n_paced,
+        "mean_batch_at_paced": round(float(np.mean(batch_sizes)), 2),
         "latency_ms": {"p50": round(float(p50), 2), "p95": round(float(p95), 2),
                        "p99": round(float(p99), 2)},
         "alerts_raised": pipeline.confusion["tp"] + pipeline.confusion["fp"],

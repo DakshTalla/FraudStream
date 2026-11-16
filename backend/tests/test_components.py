@@ -49,8 +49,8 @@ def test_in_process_broker_delivers_in_order():
         broker = InProcessBroker()
         for i in range(5):
             await broker.publish("t", {"i": i})
-        stream = broker.subscribe("t")
-        return [(await anext(stream))["i"] for _ in range(5)]
+        batch = await anext(broker.subscribe("t"))   # one micro-batch
+        return [message["i"] for message in batch]
 
     assert asyncio.run(scenario()) == [0, 1, 2, 3, 4]
 

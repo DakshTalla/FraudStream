@@ -48,11 +48,20 @@ class FraudModel:
         self.metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         self.threshold: float = self.metrics["threshold"]
 
+    def score_batch(self, feature_rows: list[dict[str, float]]) -> np.ndarray:
+        """Fraud probability in [0, 1] for each transaction, in ONE model call.
+
+        WHY batch: a single XGBoost call has a fixed overhead (~0.5 ms of
+        Python/C bookkeeping) that dwarfs the tree walk itself. Scoring 100
+        rows costs almost the same as scoring 1, so batching what is already
+        waiting multiplies throughput without adding latency.
+        """
+        rows = np.asarray([to_vector(f) for f in feature_rows], dtype=np.float32)
+        # inplace_predict skips building a DMatrix, saving another copy.
+        return self.booster.inplace_predict(rows)
+
     def score(self, features: dict[str, float]) -> float:
-        """Fraud probability in [0, 1] for one transaction."""
-        row = np.asarray([to_vector(features)], dtype=np.float32)
-        # inplace_predict skips building a DMatrix, the main per-call overhead.
-        return float(self.booster.inplace_predict(row)[0])
+        return float(self.score_batch([features])[0])
 
     def shap_values(self, features: dict[str, float]) -> np.ndarray:
         """Exact TreeSHAP values: one per feature, plus the base value last.

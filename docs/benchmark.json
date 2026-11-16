@@ -1,0 +1,38 @@
+{
+  "memory": {
+    "broker": "in-process queue",
+    "machine": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel / Python 3.14.2",
+    "max_throughput_tps": 7900,
+    "max_throughput_txns": 50000,
+    "mean_batch_at_max": 49.9,
+    "paced_rate_tps": 500,
+    "paced_txns": 10000,
+    "mean_batch_at_paced": 1.0,
+    "latency_ms": {
+      "p50": 1.31,
+      "p95": 1.67,
+      "p99": 3.88
+    },
+    "alerts_raised": 469,
+    "live_precision": 0.9232,
+    "live_recall": 0.9496
+  },
+  "kafka": {
+    "broker": "Redpanda / Kafka",
+    "machine": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel / Python 3.14.2",
+    "max_throughput_tps": 2502,
+    "max_throughput_txns": 50000,
+    "mean_batch_at_max": 242.7,
+    "paced_rate_tps": 500,
+    "paced_txns": 10000,
+    "mean_batch_at_paced": 6.74,
+    "latency_ms": {
+      "p50": 16.53,
+      "p95": 26.23,
+      "p99": 33.73
+    },
+    "alerts_raised": 469,
+    "live_precision": 0.9232,
+    "live_recall": 0.9496
+  }
+}

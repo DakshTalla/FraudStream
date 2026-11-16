@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import math
 import time
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -29,7 +28,11 @@ from .schema import Transaction
 from .simulator import Simulator
 from .storage import AlertStore
 
-WARM_UP_TXNS = 150_000
+# WHY this many: the model was evaluated on accounts with roughly this much
+# history behind them. With a shorter warm-up, accounts look "younger" than
+# anything in the test period and live precision drops from ~0.93 to ~0.83
+# (measured). Feature state maturity is a real source of train/serve skew.
+WARM_UP_TXNS = 340_000
 TICKER_MAX_PER_SEC = 30   # the UI cannot usefully show more rows than this
 
 
@@ -66,14 +69,16 @@ async def produce(simulator: Simulator, broker, tps: float) -> None:
 
 async def score(pipeline: Pipeline, broker, tps: float) -> None:
     """Consume transactions, score them, push results to dashboards."""
-    sample_every = max(1, math.ceil(tps / TICKER_MAX_PER_SEC))
-    async for message in broker.subscribe(TOPIC_TRANSACTIONS):
-        event = pipeline.process(Transaction.from_dict(message))
-        if event["is_alert"]:
-            await hub.broadcast({"type": "alert", "alert": event["alert"]})
-        if event["is_alert"] or pipeline.processed % sample_every == 0:
-            await hub.broadcast({"type": "txn", "txn": event["txn"],
-                                 "score": event["score"], "is_alert": event["is_alert"]})
+    # At high rates show only a sample in the ticker (alerts are always shown).
+    keep = max(1, min(10, round(10 * TICKER_MAX_PER_SEC / tps)))
+    sampled_digits = "0123456789"[:keep]
+    async for batch in broker.subscribe(TOPIC_TRANSACTIONS):
+        for event in pipeline.process_batch([Transaction.from_dict(m) for m in batch]):
+            if event["is_alert"]:
+                await hub.broadcast({"type": "alert", "alert": event["alert"]})
+            if event["is_alert"] or event["txn"]["txn_id"][-1] in sampled_digits:
+                await hub.broadcast({"type": "txn", "txn": event["txn"],
+                                     "score": event["score"], "is_alert": event["is_alert"]})
 
 
 async def publish_stats(pipeline: Pipeline) -> None:

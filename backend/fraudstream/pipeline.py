@@ -1,4 +1,4 @@
-"""The scoring pipeline: one transaction in, one decision out.
+"""The scoring pipeline: transactions in, decisions out.
 
     features -> rules + model -> (if suspicious) SHAP reasons -> store alert
 
@@ -46,9 +46,21 @@ class Pipeline:
             self.features.update(txn)
 
     def process(self, txn: Transaction) -> dict:
-        """Score one transaction. Returns the event sent to the dashboard."""
-        features = self.features.compute_and_update(txn)
-        score = self.model.score(features)
+        return self.process_batch([txn])[0]
+
+    def process_batch(self, txns: list[Transaction]) -> list[dict]:
+        """Score a micro-batch. Returns one dashboard event per transaction.
+
+        Features are still computed one by one, in arrival order, because each
+        transaction changes the state the next one reads. Only the model call
+        is batched (see FraudModel.score_batch for why).
+        """
+        feature_rows = [self.features.compute_and_update(txn) for txn in txns]
+        scores = self.model.score_batch(feature_rows)
+        return [self._decide(txn, features, float(score))
+                for txn, features, score in zip(txns, feature_rows, scores)]
+
+    def _decide(self, txn: Transaction, features: dict, score: float) -> dict:
         fired = rules.evaluate(features)
         model_flag = score >= self.model.threshold
         is_alert = model_flag or bool(fired)
