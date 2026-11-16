@@ -1,0 +1,10 @@
+numpy
+pandas
+scikit-learn
+xgboost
+networkx
+fastapi
+uvicorn[standard]
+kafka-python
+pytest
+httpx
