@@ -1,38 +1,74 @@
 {
+  "memory_no_batching": {
+    "broker": "in-process queue",
+    "micro_batching": false,
+    "machine": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel / Python 3.14.2",
+    "max_throughput_tps": 2066,
+    "max_throughput_txns": 50000,
+    "mean_batch_at_max": 1.0,
+    "paced_rate_tps": 500,
+    "paced_txns": 10000,
+    "mean_batch_at_paced": 1.0,
+    "latency_ms": {
+      "p50": 0.51,
+      "p95": 0.76,
+      "p99": 1.61
+    },
+    "alerts_raised": 469,
+    "live_precision": 0.9232,
+    "live_recall": 0.9496,
+    "all_runs_max_throughput_tps": [
+      2020,
+      2066,
+      2151
+    ]
+  },
   "memory": {
     "broker": "in-process queue",
+    "micro_batching": true,
     "machine": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel / Python 3.14.2",
-    "max_throughput_tps": 7900,
+    "max_throughput_tps": 20633,
     "max_throughput_txns": 50000,
     "mean_batch_at_max": 49.9,
     "paced_rate_tps": 500,
     "paced_txns": 10000,
     "mean_batch_at_paced": 1.0,
     "latency_ms": {
-      "p50": 1.31,
-      "p95": 1.67,
-      "p99": 3.88
+      "p50": 0.5,
+      "p95": 0.71,
+      "p99": 1.6
     },
     "alerts_raised": 469,
     "live_precision": 0.9232,
-    "live_recall": 0.9496
+    "live_recall": 0.9496,
+    "all_runs_max_throughput_tps": [
+      20359,
+      20633,
+      21038
+    ]
   },
   "kafka": {
     "broker": "Redpanda / Kafka",
+    "micro_batching": true,
     "machine": "Intel64 Family 6 Model 197 Stepping 2, GenuineIntel / Python 3.14.2",
-    "max_throughput_tps": 2502,
+    "max_throughput_tps": 6269,
     "max_throughput_txns": 50000,
-    "mean_batch_at_max": 242.7,
+    "mean_batch_at_max": 243.9,
     "paced_rate_tps": 500,
     "paced_txns": 10000,
-    "mean_batch_at_paced": 6.74,
+    "mean_batch_at_paced": 8.32,
     "latency_ms": {
-      "p50": 16.53,
-      "p95": 26.23,
-      "p99": 33.73
+      "p50": 18.11,
+      "p95": 22.29,
+      "p99": 24.11
     },
     "alerts_raised": 469,
     "live_precision": 0.9232,
-    "live_recall": 0.9496
+    "live_recall": 0.9496,
+    "all_runs_max_throughput_tps": [
+      6202,
+      6269,
+      6372
+    ]
   }
 }
