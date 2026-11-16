@@ -103,8 +103,12 @@ def train(n_txns: int = 250_000, seed: int = 42) -> dict:
     flagged = scores >= threshold
     te_kinds, te_rules = kinds[val_end:], rule_hits[val_end:]
 
+    # The raw curve has one point per distinct score (tens of thousands, almost
+    # all bunched at recall ~ 1). Resample it at 201 evenly spaced recall values
+    # so the dashboard gets a small, evenly detailed curve.
     precision, recall, _ = precision_recall_curve(y_te, scores)
-    step = max(len(precision) // 150, 1)   # thin the curve for the dashboard
+    grid = np.linspace(0, 1, 201)
+    curve = np.interp(grid, recall[::-1], precision[::-1])   # interp needs ascending x
     importance = model.get_booster().get_score(importance_type="gain")
     metrics = {
         "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -123,8 +127,8 @@ def train(n_txns: int = 250_000, seed: int = 42) -> dict:
             kind: round(float(flagged[te_kinds == kind].mean()), 4)
             for kind in FRAUD_TYPES if (te_kinds == kind).any()
         },
-        "pr_curve": [{"recall": round(float(r), 4), "precision": round(float(p), 4)}
-                     for p, r in zip(precision[::step], recall[::step])],
+        "pr_curve": [{"recall": round(float(r), 3), "precision": round(float(p), 4)}
+                     for r, p in zip(grid, curve)],
         "feature_importance": sorted(
             ({"feature": FEATURE_NAMES[int(k[1:])], "gain": round(v, 2)}
              for k, v in importance.items()),

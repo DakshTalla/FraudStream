@@ -31,7 +31,7 @@ REASON_TEXT = {
     "payee_in_degree_24h": "Payee received from {v:.0f} different payers in 24h",
     "payee_inflow_24h": "Payee received Rs {v:,.0f} in the last 24h",
     "payee_txn_count": "Payee account has only {v:.0f} earlier incoming payments",
-    "payee_passthrough_24h": "Payee already forwarded {v:.0%} of the money it received",
+    "payee_passthrough_24h": "Payee forwarded {v:.0%} of the money it received in 24h",
     "payer_secs_since_received": "Payer received money just {v:,.0f} seconds ago",
     "payer_in_degree_24h": "Payer itself received from {v:.0f} different accounts in 24h",
     "fwd_ratio": "This payment forwards {v:.0%} of what the payer received in 24h",

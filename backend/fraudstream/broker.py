@@ -38,9 +38,10 @@ class InProcessBroker:
     """One bounded asyncio.Queue per topic."""
     name = "in-process queue"
 
-    def __init__(self, max_size: int = 10_000):
+    def __init__(self, max_size: int = 10_000, max_batch: int = MAX_BATCH):
         self._queues: dict[str, asyncio.Queue] = {}
         self._max_size = max_size
+        self._max_batch = max_batch   # 1 = no batching (used by the benchmark)
 
     def _queue(self, topic: str) -> asyncio.Queue:
         if topic not in self._queues:
@@ -63,7 +64,7 @@ class InProcessBroker:
         queue = self._queue(topic)
         while True:
             batch = [await queue.get()]
-            while len(batch) < MAX_BATCH and not queue.empty():
+            while len(batch) < self._max_batch and not queue.empty():
                 batch.append(queue.get_nowait())
             yield batch
 
@@ -81,6 +82,7 @@ class KafkaBroker:
         self._group_id = group_id
         self._producer = None
         self._stopping = threading.Event()
+        self._threads: list[threading.Thread] = []
 
     async def start(self) -> None:
         from kafka import KafkaProducer
@@ -103,9 +105,14 @@ class KafkaBroker:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(8)   # holds batches, not messages
         consumer = KafkaConsumer(
-            topic, bootstrap_servers=self._bootstrap, group_id=self._group_id,
+            topic, bootstrap_servers=self._bootstrap,
+            # One consumer group per topic. A group remembers its position
+            # (committed offset), so a restarted scorer would resume where it
+            # stopped. This demo uses a new topic for every run instead (see
+            # api.py), so the group is new too and reads from the beginning.
+            group_id=f"{self._group_id}-{topic}",
             value_deserializer=_from_json,
-            auto_offset_reset="latest",   # a fresh consumer starts from "now"
+            auto_offset_reset="earliest",
         )
 
         def poll_forever() -> None:
@@ -120,12 +127,18 @@ class KafkaBroker:
                     future.result()   # blocks this thread if the scorer is behind
             consumer.close()
 
-        threading.Thread(target=poll_forever, daemon=True, name="kafka-consumer").start()
+        thread = threading.Thread(target=poll_forever, daemon=True, name="kafka-consumer")
+        thread.start()
+        self._threads.append(thread)
         while True:
             yield await queue.get()
 
     async def stop(self) -> None:
         self._stopping.set()
+        # Give consumers a moment to close cleanly (leave their group); a
+        # member that just vanishes makes the next join wait for a timeout.
+        for thread in self._threads:
+            await asyncio.to_thread(thread.join, 2)
         if self._producer is not None:
             self._producer.flush(timeout=2)
             self._producer.close(timeout=2)

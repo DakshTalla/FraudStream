@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -51,28 +52,29 @@ class Hub:
                 self.clients.discard(client)
 
 
+logger = logging.getLogger("uvicorn.error")
 hub = Hub()
 state: dict = {}
 
 
-async def produce(simulator: Simulator, broker, tps: float) -> None:
+async def produce(simulator: Simulator, broker, topic: str, tps: float) -> None:
     """Publish simulated transactions at a steady rate."""
     interval = 1.0 / tps
     next_at = time.perf_counter()
     for txn in simulator.stream():
         txn.emitted_at = time.time()
-        await broker.publish(TOPIC_TRANSACTIONS, txn.to_dict())
+        await broker.publish(topic, txn.to_dict())
         # Schedule against absolute time so small sleep errors do not add up.
         next_at += interval
         await asyncio.sleep(max(0.0, next_at - time.perf_counter()))
 
 
-async def score(pipeline: Pipeline, broker, tps: float) -> None:
+async def score(pipeline: Pipeline, broker, topic: str, tps: float) -> None:
     """Consume transactions, score them, push results to dashboards."""
     # At high rates show only a sample in the ticker (alerts are always shown).
     keep = max(1, min(10, round(10 * TICKER_MAX_PER_SEC / tps)))
     sampled_digits = "0123456789"[:keep]
-    async for batch in broker.subscribe(TOPIC_TRANSACTIONS):
+    async for batch in broker.subscribe(topic):
         for event in pipeline.process_batch([Transaction.from_dict(m) for m in batch]):
             if event["is_alert"]:
                 await hub.broadcast({"type": "alert", "alert": event["alert"]})
@@ -85,6 +87,14 @@ async def publish_stats(pipeline: Pipeline) -> None:
     while True:
         await asyncio.sleep(1.0)
         await hub.broadcast({"type": "stats", "stats": pipeline.stats()})
+
+
+def log_task_failure(task: asyncio.Task) -> None:
+    """WHY: an exception inside a background task is otherwise swallowed
+    silently and the stream just stops. Make such failures loud."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("background task %s crashed", task.get_name(),
+                     exc_info=task.exception())
 
 
 @asynccontextmanager
@@ -100,9 +110,16 @@ async def lifespan(app: FastAPI):
     broker = make_broker()
     await broker.start()
     state.update(pipeline=pipeline, store=store, model=model, broker=broker)
-    tasks = [asyncio.create_task(score(pipeline, broker, LIVE_TPS)),
-             asyncio.create_task(produce(simulator, broker, LIVE_TPS)),
-             asyncio.create_task(publish_stats(pipeline))]
+    # WHY a new topic per run: every run restarts the simulated clock. Reusing
+    # one topic would replay the previous run's events first, out of order in
+    # event time, and corrupt the rolling-window features. A real deployment
+    # keeps ONE topic and lets the consumer group resume from its offset.
+    topic = f"{TOPIC_TRANSACTIONS}-{int(time.time())}"
+    tasks = [asyncio.create_task(score(pipeline, broker, topic, LIVE_TPS), name="scorer"),
+             asyncio.create_task(produce(simulator, broker, topic, LIVE_TPS), name="producer"),
+             asyncio.create_task(publish_stats(pipeline), name="stats")]
+    for task in tasks:
+        task.add_done_callback(log_task_failure)
     yield
     for task in tasks:
         task.cancel()

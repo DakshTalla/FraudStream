@@ -1,7 +1,8 @@
 """Measure throughput and latency. Numbers in the README come from here.
 
-    python -m fraudstream.benchmark            # in-process queue
-    python -m fraudstream.benchmark --broker kafka
+    python -m fraudstream.benchmark                  # in-process queue
+    python -m fraudstream.benchmark --no-batching    # same, one model call per txn
+    python -m fraudstream.benchmark --broker kafka   # through Redpanda
 
 Two measurements:
 1. max throughput: push N transactions through the broker as fast as possible
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .broker import make_broker
+from .broker import InProcessBroker, make_broker
 from .config import BACKEND_DIR
 from .model import FraudModel
 from .pipeline import Pipeline
@@ -32,11 +33,12 @@ from .storage import AlertStore
 OUT_PATH = BACKEND_DIR.parent / "docs" / "benchmark.json"
 
 
-async def run(broker_kind: str, n_max: int, rate: float, seconds: float) -> dict:
+async def run(broker_kind: str, n_max: int, rate: float, seconds: float,
+              batching: bool = True) -> dict:
     pipeline = Pipeline(FraudModel(), AlertStore(":memory:"))
     simulator = Simulator(seed=11)
     pipeline.warm_up(simulator, 340_000)   # same maturity as the API
-    broker = make_broker(broker_kind)
+    broker = make_broker(broker_kind) if batching else InProcessBroker(max_batch=1)
     await broker.start()
     topic = f"bench-{int(time.time())}"   # fresh topic so old runs do not mix in
     stream = broker.subscribe(topic)
@@ -92,6 +94,7 @@ async def run(broker_kind: str, n_max: int, rate: float, seconds: float) -> dict
     p50, p95, p99 = np.percentile(latencies_ms, [50, 95, 99])
     return {
         "broker": broker.name,
+        "micro_batching": batching,
         "machine": f"{platform.processor()} / Python {platform.python_version()}",
         "max_throughput_tps": round(throughput),
         "max_throughput_txns": n_max,
@@ -113,11 +116,21 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=50_000, help="txns for max throughput")
     parser.add_argument("--rate", type=float, default=500, help="txns/sec for latency test")
     parser.add_argument("--seconds", type=float, default=20)
+    parser.add_argument("--repeat", type=int, default=3, help="runs; the median is reported")
+    parser.add_argument("--no-batching", action="store_true",
+                        help="score one transaction per model call (in-process only)")
     args = parser.parse_args()
 
-    result = asyncio.run(run(args.broker, args.n, args.rate, args.seconds))
+    # WHY repeat: a laptop's speed varies with temperature and background
+    # work. Reporting the median run is more honest than the best one.
+    runs = [asyncio.run(run(args.broker, args.n, args.rate, args.seconds,
+                            batching=not args.no_batching)) for _ in range(args.repeat)]
+    runs.sort(key=lambda r: r["max_throughput_tps"])
+    result = runs[len(runs) // 2]
+    result["all_runs_max_throughput_tps"] = [r["max_throughput_tps"] for r in runs]
     print(json.dumps(result, indent=2))
+
     OUT_PATH.parent.mkdir(exist_ok=True)
     existing = json.loads(OUT_PATH.read_text(encoding="utf-8")) if OUT_PATH.exists() else {}
-    existing[args.broker] = result
+    existing[args.broker + ("" if not args.no_batching else "_no_batching")] = result
     OUT_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
