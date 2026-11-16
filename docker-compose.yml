@@ -1,0 +1,16 @@
+# Optional: a single-node Redpanda (Kafka-compatible) broker.
+#   docker compose up -d
+# FraudStream auto-detects it on localhost:19092; without it the app falls
+# back to an in-process queue behind the same Broker interface.
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: fraudstream-redpanda
+    command:
+      - redpanda start
+      - --mode dev-container        # single node, low memory, auto-create topics
+      - --smp 1
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
