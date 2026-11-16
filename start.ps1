@@ -3,11 +3,13 @@
 #   .\start.ps1                  # set up everything and open the dashboard
 #   .\start.ps1 -NoDocker        # skip Redpanda, use the in-process queue
 #   .\start.ps1 -Tps 60          # simulate 60 transactions per second
+#   .\start.ps1 -NoBrowser       # do not open the browser at the end
 #
 # First run: creates the Python venv, installs packages, trains the model and
 # installs the frontend packages (a few minutes). Later runs start in seconds.
 param(
     [switch]$NoDocker,
+    [switch]$NoBrowser,
     [double]$Tps = 20,
     [int]$ApiPort = 8000,
     [int]$WebPort = 3100
@@ -57,10 +59,13 @@ if (-not (Test-Path (Join-Path $root "frontend\node_modules"))) {
 # --- 4. Broker: Redpanda if Docker is running, else in-process queue -----------
 $broker = "memory"
 if (-not $NoDocker -and (Get-Command docker -ErrorAction SilentlyContinue)) {
-    docker info *> $null
+    # WHY cmd /c: when Docker is not running, "docker info" prints to stderr.
+    # PowerShell 5.1 would turn that into a script-stopping error; going
+    # through cmd lets us just read the exit code.
+    cmd /c "docker info >nul 2>&1"
     if ($LASTEXITCODE -eq 0) {
         Step "Starting Redpanda (Kafka-compatible broker) in Docker"
-        docker compose -f (Join-Path $root "docker-compose.yml") up -d
+        cmd /c "docker compose -f `"$root\docker-compose.yml`" up -d 2>&1"
         if ($LASTEXITCODE -eq 0) { $broker = "auto" }
     }
 }
@@ -80,13 +85,15 @@ Write-Host "Waiting for the API (it replays history to warm up its state)..."
 $ready = $false
 foreach ($attempt in 1..60) {
     try {
-        Invoke-RestMethod "http://localhost:$ApiPort/api/health" -TimeoutSec 2 | Out-Null
+        # WHY 127.0.0.1 and not localhost: PowerShell tries IPv6 (::1) first,
+        # the API listens on IPv4 only, and the IPv6 attempt eats the timeout.
+        Invoke-RestMethod "http://127.0.0.1:$ApiPort/api/health" -TimeoutSec 3 | Out-Null
         $ready = $true
         break
     } catch { Start-Sleep -Seconds 1 }
 }
 if (-not $ready) { throw "The API did not start. Check the backend window for the error." }
 
-Start-Process "http://localhost:$WebPort"
+if (-not $NoBrowser) { Start-Process "http://localhost:$WebPort" }
 Write-Host "`nFraudStream is running: http://localhost:$WebPort" -ForegroundColor Green
 Write-Host "To stop: close the two new PowerShell windows. To stop Redpanda: docker compose down"

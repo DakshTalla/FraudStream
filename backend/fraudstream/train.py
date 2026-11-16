@@ -70,7 +70,7 @@ def confusion(y_true, flagged) -> dict:
     }
 
 
-def train(n_txns: int = 250_000, seed: int = 42) -> dict:
+def train(n_txns: int = 400_000, seed: int = 42) -> dict:
     started = time.time()
     X, y, kinds, rule_hits = build_dataset(n_txns, seed)
     print(f"Simulated {n_txns:,} txns, fraud rate {y.mean():.3%} "
@@ -143,7 +143,7 @@ def train(n_txns: int = 250_000, seed: int = 42) -> dict:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the FraudStream model")
-    parser.add_argument("--txns", type=int, default=250_000)
+    parser.add_argument("--txns", type=int, default=400_000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     result = train(args.txns, args.seed)

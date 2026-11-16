@@ -55,7 +55,8 @@ opens the dashboard at http://localhost:3100.
 - If Docker is running, the script starts Redpanda and the pipeline uses it.
 - If not, it uses an in-process queue behind the same interface. Nothing else changes.
 
-Options: `start.bat -NoDocker`, `start.bat -Tps 60`, `start.bat -ApiPort 8001 -WebPort 3200`.
+Options: `-NoDocker` (skip Redpanda), `-Tps 60` (traffic rate), `-ApiPort 8001 -WebPort 3200`
+(other ports), `-NoBrowser`. Example: `start.bat -NoDocker -Tps 60`.
 
 To stop: close the two PowerShell windows it opened. `docker compose down` stops Redpanda.
 
